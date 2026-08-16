@@ -1,4 +1,4 @@
-**Log Collection**
+**Doombot Setup**
 
 For Windows: Run this on PowerShell:
 
