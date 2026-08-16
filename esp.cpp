@@ -1,3 +1,5 @@
+// This program initializes the network connections, listens to the hardware of UART interface and sends the payload to the MQTT broker
+
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
