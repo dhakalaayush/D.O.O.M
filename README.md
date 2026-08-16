@@ -1,6 +1,6 @@
 **Log Collection**
 
-For Windows: Run this command on PowerShell:
+For Windows: Run this on PowerShell:
 
     $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notmatch 'Loopback' } | Select-Object -ExpandProperty IPAddress -First 1)
 
@@ -30,7 +30,7 @@ For Windows: Run this command on PowerShell:
     Write-Error "[D.O.O.M.] No active Serial/Doombot port detected."
     }
 
-For Linux: Run this command on terminal:
+For Linux: Run this on terminal:
 
     stty -F /dev/ttyUSB0 115200 cs8 -cstopb -parenb
     IP_ADDR=$(hostname -I | awk '{print $1}')
