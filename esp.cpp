@@ -1,52 +1,91 @@
-/*
- * This module patiently listens on the Serial port for log telemetry initiated by the D.O.O.M. dashboard commands on the host machine.
- */
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
 
-#include <Arduino.h>
+// Initial Setup
+const char* WIFI_SSID     = "YOUR_WIFI_SSID";
+const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 
-String logBuffer = "";
+const char* MQTT_BROKER   = "192.168.1.100";
+const int   MQTT_PORT     = 1883;
+const char* TOPIC_PREFIX  = "doom/telemetry/";
 
-// Define a maximum buffer size to prevent memory exhaustion if a host machine pushes an unusually large log entry.
-const int MAX_BUFFER_SIZE = 2048; 
+const int STATUS_LED      = 2;
 
-void setup() {
-  // Initialize the telepathic link at a high baud rate for fast data transfer
-  Serial.begin(115200);
-  
-  // Wait for the serial port to establish a connection
-  while (!Serial) {
-    delay(10); 
+
+// Initialization
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+String inputBuffer = "";
+String deviceMac = "";
+String telemetryTopic = "";
+
+// Setup WiFi
+void setupWifi() {
+  pinMode(STATUS_LED, OUTPUT);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    digitalWrite(STATUS_LED, !digitalRead(STATUS_LED));
+    delay(300);
   }
-  
-  // A startup beacon to confirm the Doombot is alive and listening
-  Serial.println("[DOOMBOT] Initialization complete. Awaiting host telemetry...");
+
+  digitalWrite(STATUS_LED, HIGH);
+  deviceMac = WiFi.macAddress();
+  telemetryTopic = String(TOPIC_PREFIX) + deviceMac;
 }
 
+// Keep trying to connect to MQTT unless successful
+void reconnectMqtt() {
+  while (!client.connected()) {
+    String clientId = "Doombot-" + deviceMac;
+    if (client.connect(clientId.c_str())) {
+      // Successfully connected
+    } else {
+      delay(2000);
+    }
+  }
+}
+
+// ESP32 setup 
+void setup() {
+  Serial.begin(115200);
+  setupWifi();
+  client.setServer(MQTT_BROKER, MQTT_PORT);
+  client.setBufferSize(4096); // Expand buffer for large package manifests
+}
+
+
 void loop() {
-  // Check if the host machine is actively transmitting logs down the wire
-  if (Serial.available() > 0) {
-    
-    // Read the incoming byte
-    char incomingChar = Serial.read();
-    
-    // Process the data when a newline character is detected (End of log entry)
-    if (incomingChar == '\n') {
-      
-      // 'logBuffer' now contains the complete, raw log string from the host.  Clear the buffer to prepare for the next incoming log
-      logBuffer = ""; 
-      
-    } 
-      
-    // Ignore carriage returns to ensure clean string formatting
-    else if (incomingChar != '\r') { 
-      
-      // Append the character as long as it does not exceed memory limit
-      if (logBuffer.length() < MAX_BUFFER_SIZE) {
-        logBuffer += incomingChar;
-      } else {
-        // If the buffer overflows, flush it to prevent the ESP32 from crashing.
-        logBuffer = ""; 
+  if (!client.connected()) {
+    reconnectMqtt();
+  }
+  client.loop();
+
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+    if (c == '\n') {
+      if (inputBuffer.length() > 0) {
+        // Build JSON wrapper
+        DynamicJsonDocument doc(4096);
+        doc["doombot_id"] = deviceMac;
+        doc["timestamp"] = millis();
+        
+        DynamicJsonDocument hostDoc(3072);
+        DeserializationError err = deserializeJson(hostDoc, inputBuffer);
+
+        if (!err) {
+          doc["telemetry"] = hostDoc;
+          String output;
+          serializeJson(doc, output);
+          client.publish(telemetryTopic.c_str(), output.c_str());
+        }
+        inputBuffer = "";
       }
+    } else if (c != '\r') {
+      inputBuffer += c;
     }
   }
 }
