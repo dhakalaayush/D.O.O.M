@@ -3,10 +3,10 @@
 #include <ArduinoJson.h>
 
 // Initial Setup
-const char* WIFI_SSID     = "YOUR_WIFI_SSID";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+const char* WIFI_SSID     = "SSID";
+const char* WIFI_PASSWORD = "PASSWORD";
 
-const char* MQTT_BROKER   = "192.168.1.100";
+const char* MQTT_BROKER   = "192.168.1.79";
 const int   MQTT_PORT     = 1883;
 const char* TOPIC_PREFIX  = "doom/telemetry/";
 
