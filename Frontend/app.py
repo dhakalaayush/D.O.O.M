@@ -13,15 +13,18 @@ st.markdown("""
 <style>
     /* This is the theme of the webpage */
     .stApp {
-    background-color: #011f02; color: white;
+    background-color: #011f02; 
+    color: white;
     }
     
     h1, h2, h3, h4 {
-    color: #f8fafc; font-weight: 600;
+    color: #f8fafc; 
+    font-weight: 600;
     }
     
     hr {
-        border-color: #334155; margin: 24px 0;
+        border-color: #334155; 
+        margin: 24px 0;
     }
     
     .boris-banner {
