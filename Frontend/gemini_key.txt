@@ -1,0 +1,1 @@
+This file should contain Gemini 1.5 flash lite API key. For security reasons, I have not kept my API key here.
