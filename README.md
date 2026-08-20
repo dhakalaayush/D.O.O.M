@@ -19,3 +19,7 @@ After installing doombot on the endpoint, following commands should be run:
     LOGS=$(tail -n 5 /var/log/auth.log | jq -R -s -c 'split("\n")[:-1]')
     PAYLOAD="{\"doombot_id\":\"doombot-linux-1\",\"os\":\"Linux\",\"logs\":$LOGS}"
     echo "$PAYLOAD" > /dev/ttyUSB0
+
+Start FastAPI server:
+
+    uvicorn main:app --reload
