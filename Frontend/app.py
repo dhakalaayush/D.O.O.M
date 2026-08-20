@@ -1,10 +1,43 @@
-# Since this is at intial stage, the data are hardcoded right now. Database and Node-RED are yet to be set up.
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import os
+import re
+import google.generativeai as genai
+
+
+# AI SETUP
+try:
+    with open("gemini_key.txt", "r") as f:
+        GEMINI_API_KEY = f.read().strip()
+    genai.configure(api_key=GEMINI_API_KEY)
+    ai_enabled = True
+except FileNotFoundError:
+    GEMINI_API_KEY = None
+    ai_enabled = False
+    print("Error fetching AI. Boris AI will operate in offline fallback mode.")
+
+def generate_boris_mitigation(alert_name, description, os_type):
+    """Prompts Gemini to generate a tactical mitigation response."""
+    if not ai_enabled:
+        return "Offline Mode: Isolate host and consult local DFIR playbook."
+        
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        prompt = f"""
+        You are Boris, an expert cybersecurity AI assistant embedded in a custom SIEM.
+        Analyze the following security alert for a {os_type} machine and provide a highly concise, 
+        actionable incident response mitigation plan. Do not use markdown formatting like bolding in the response.
+        Keep it strictly under 5 sentences.
+        
+        Alert Name: {alert_name}
+        Details: {description}
+        """
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"Boris encountered a neural link error: {str(e)}"
 
 # Page Setup
 st.set_page_config(page_title="D.O.O.M. SIEM", layout="wide", initial_sidebar_state="collapsed")
@@ -51,7 +84,7 @@ st.markdown("""
         font-weight: 600;
     }
     .custom-table td {
-        background-color: #011f02
+        background-color: #011f02;
         color: white;
         border: none; 
         border-bottom: 1px solid #1a301b;
@@ -60,60 +93,70 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Sample datasets, I will replace this later with real data
+# ==========================================
+# DYNAMIC DATA INGESTION
+# ==========================================
+def get_real_alerts():
+    alerts = []
+    if not os.path.exists("alerts.txt"):
+        return alerts
+        
+    with open("alerts.txt", "r") as f:
+        lines = f.readlines()
+        
+    for line in reversed(lines):
+        match = re.match(r"\[(.*?) - (.*?)\] (.*)", line.strip())
+        if match:
+            machine_id = match.group(1)
+            os_type = match.group(2)
+            details = match.group(3)
+            
+            severity = "LOW"
+            alert_name = "Suspicious Activity"
+            
+            if "SQL Injection" in details or "Suspicious Action" in details:
+                severity = "HIGH"
+                alert_name = "Payload / Injection Attack"
+            elif "Brute Force" in details:
+                severity = "MEDIUM"
+                alert_name = "Authentication Brute Force"
+                
+            alerts.append({
+                "alert_name": alert_name,
+                "machine": machine_id,
+                "os": os_type,
+                "severity": severity,
+                "cve_id": "Dynamic Triage",
+                "description": details,
+                "cvss": 8.5 if severity == "HIGH" else 5.5,
+                "epss": "N/A",
+                "vpr": "N/A",
+                "mitigation": "" # Will be dynamically filled by Boris
+            })
+    return alerts
+
+real_alerts_data = get_real_alerts()
+
+high_count = sum(1 for a in real_alerts_data if a["severity"] == "HIGH")
+med_count = sum(1 for a in real_alerts_data if a["severity"] == "MEDIUM")
+low_count = sum(1 for a in real_alerts_data if a["severity"] == "LOW")
+
 fleet_data = pd.DataFrame([
-    {"Doombot": "doombot1", "Machine Name": "<machine name>", "Operating System": "Windows", "IP Address": "192.168.10.1", "Alerts": "None", "Status": "active", "high": 0, "medium": 0, "low": 0},
-    {"Doombot": "doombot2", "Machine Name": "<machine name>", "Operating System": "Linux", "IP Address": "192.168.10.2", "Alerts": "1 High", "Status": "inactive", "high": 1, "medium": 0, "low": 0},
-    {"Doombot": "doombot3", "Machine Name": "<machine name>", "Operating System": "Windows", "IP Address": "192.168.10.3", "Alerts": "2 Medium", "Status": "inactive", "high": 0, "medium": 2, "low": 1}
+    {"Doombot": "doombot1", "Machine Name": "Target-01", "Operating System": "Windows/Linux", "IP Address": "192.168.1.X", "Alerts": f"{len(real_alerts_data)} Total", "Status": "active", "high": high_count, "medium": med_count, "low": low_count},
 ])
 
-# Threat Triage Alerts
-alerts_data = [
-    {
-        "alert_name": "<alert name>",
-        "machine": "<machine name>",
-        "severity": "HIGH",
-        "cve_id": "<related cve id>",
-        "description": "<AI Analysis of the vulnerability correlating to the machine and the OS.>",
-        "cvss": 7, "epss": "10%", "vpr": 6,
-        "mitigation": "<AI Analysis of the incident response of the vulnerability.>"
-    },
-    {
-        "alert_name": "<alert name>",
-        "machine": "<machine name>",
-        "severity": "LOW",
-        "cve_id": "<related cve id>",
-        "description": "<AI Analysis of the vulnerability correlating to the machine and the OS.>",
-        "cvss": 3, "epss": "2%", "vpr": 2,
-        "mitigation": "<AI Analysis of the incident response of the vulnerability.>"
-    },
-    {
-        "alert_name": "<alert name>",
-        "machine": "<machine name>",
-        "severity": "MEDIUM",
-        "cve_id": "<related cve id>",
-        "description": "<AI Analysis of the vulnerability correlating to the machine and the OS.>",
-        "cvss": 5, "epss": "5%", "vpr": 4,
-        "mitigation": "<AI Analysis of the incident response of the vulnerability.>"
-    }
-]
-
-# Windows Sysmon Archive Logs
 windows_logs = pd.DataFrame([
     {"Timestamp": "<timestamp>", "Event ID": "<event_id>", "Process ID": "<process_id>", "User": "<user>", "Image": "<image>", "Parent Image": "<parent_image>", "Hashes": "<hash>"},
-    {"Timestamp": "<timestamp>", "Event ID": "<event_id>", "Process ID": "<process_id>", "User": "<user>", "Image": "<image>", "Parent Image": "<parent_image>", "Hashes": "<hash>"},
-    {"Timestamp": "<timestamp>", "Event ID": "<event_id>", "Process ID": "<process_id>", "User": "<user>", "Image": "<image>", "Parent Image": "<parent_image>", "Hashes": "<hash>"}
 ])
 
-# Linux Syslog Archive Logs
 linux_logs = pd.DataFrame([
     {"Timestamp": "<timestamp>", "Hostname": "<hostname>", "Process": "<process_name>", "Description": "<description>"},
-    {"Timestamp": "<timestamp>", "Hostname": "<hostname>", "Process": "<process_name>", "Description": "<description>"},
-    {"Timestamp": "<timestamp>", "Hostname": "<hostname>", "Process": "<process_name>", "Description": "<description>"}
 ])
 
 
-# Boris AI Analysis
+# ==========================================
+# BORIS AI ANALYSIS MODAL
+# ==========================================
 @st.dialog("Boris Threat Assessment")
 def boris_popup(item):
     st.markdown(f"### {item['alert_name']}")
@@ -132,13 +175,18 @@ def boris_popup(item):
     st.divider()
     
     st.markdown("#### **Boris Response**")
-    st.write(item['mitigation'])
     
-    if st.button("Close", use_container_width=True):
+    # Trigger Gemini when the modal opens
+    with st.spinner("Boris is analyzing the threat telemetry..."):
+        ai_mitigation = generate_boris_mitigation(item['alert_name'], item['description'], item['os'])
+        
+    st.write(ai_mitigation)
+    
+    if st.button("Acknowledge & Close", use_container_width=True):
         st.rerun()
 
 # Header
-col_logo, col_title = st.columns([1, 10])
+col_logo, col_title, col_refresh = st.columns([1, 8, 2])
 
 with col_logo:
     if os.path.exists("Logo.png"):
@@ -149,6 +197,11 @@ with col_logo:
 with col_title:
     st.markdown("# D . O . O . M")
 
+with col_refresh:
+    st.write("") 
+    if st.button("Refresh Telemetry"):
+        st.rerun()
+
 st.write("")
 
 # Doombot Assets
@@ -158,7 +211,6 @@ table_col, status_col = st.columns([3, 1])
 
 with table_col:
     display_cols = ["Doombot", "Machine Name", "Operating System", "IP Address", "Alerts", "Status"]
-    # Replaced st.dataframe with HTML injection mapped to our CSS class
     st.markdown(fleet_data[display_cols].to_html(index=False, classes="custom-table"), unsafe_allow_html=True)
 
 with status_col:
@@ -183,9 +235,9 @@ with status_col:
     )
     st.plotly_chart(fig_status, use_container_width=True, key="status_donut")
 
-# Machine Donut Charts for alerts
+# Alerts
 st.subheader("Alerts")
-machine_cols = st.columns(len(fleet_data))
+machine_cols = st.columns(max(len(fleet_data), 1))
 
 for idx, row in fleet_data.iterrows():
     with machine_cols[idx]:
@@ -196,9 +248,9 @@ for idx, row in fleet_data.iterrows():
         
         if sev_df["Count"].sum() == 0:
             sev_df = pd.DataFrame({"Severity": ["none"], "Count": [1]})
-            color_map = {"none": "#cbd5e1"}
+            color_map = {"none": "#334155"}
         else:
-            color_map = {"high": "#00643D", "medium": "#FFEC83", "low": "#9FA9B2"}
+            color_map = {"high": "#8E1D0C", "medium": "#FFEC83", "low": "#0C8E5C"}
 
         fig_machine = px.pie(
             sev_df,
@@ -222,9 +274,8 @@ for idx, row in fleet_data.iterrows():
 st.divider()
 
 # Threat Triage
-st.subheader("Threat Triage")
+st.subheader("Threat Triage (Live Data)")
 
-# Table Header
 h_col1, h_col2, h_col3, h_col4 = st.columns([3, 3, 2, 1.5])
 h_col1.markdown("**Alert**")
 h_col2.markdown("**Machine**")
@@ -232,20 +283,22 @@ h_col3.markdown("**Severity**")
 h_col4.markdown("**View Details**")
 st.markdown("<hr style='margin: 4px 0;'/>", unsafe_allow_html=True)
 
-# Table Rows
-for idx, alert in enumerate(alerts_data):
-    c1, c2, c3, c4 = st.columns([3, 3, 2, 1.5])
-    c1.write(alert["alert_name"])
-    c2.write(alert["machine"])
-    c3.write(alert["severity"])
-    if c4.button("● ● ●", key=f"btn_details_{idx}"):
-        boris_popup(alert)
-    st.markdown("<hr style='margin: 4px 0;'/>", unsafe_allow_html=True)
+if len(real_alerts_data) == 0:
+    st.info("No active threats detected. Monitoring endpoints...")
+else:
+    for idx, alert in enumerate(real_alerts_data):
+        c1, c2, c3, c4 = st.columns([3, 3, 2, 1.5])
+        c1.write(alert["alert_name"])
+        c2.write(alert["machine"])
+        c3.write(alert["severity"])
+        if c4.button("● ● ●", key=f"btn_details_{idx}"):
+            boris_popup(alert)
+        st.markdown("<hr style='margin: 4px 0;'/>", unsafe_allow_html=True)
 
 st.markdown("""
 <div class="boris-banner">
     <h3>Boris Analysis</h3>
-    <p>AI Analysis based on alerts. AI will evaluate the alerts, severity and incident response as well as mitigation.</p>
+    <p>AI Analysis based on real-time alerts pulled directly from the Fast API engine.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -262,8 +315,6 @@ selected_machine = st.selectbox(
 
 st.write("")
 
-# Dynamic Archive Log Grid
-# Replaced st.dataframe with HTML injection mapped to our CSS class
 if "(Windows)" in selected_machine:
     st.markdown(windows_logs.to_html(index=False, classes="custom-table"), unsafe_allow_html=True)
 else:
