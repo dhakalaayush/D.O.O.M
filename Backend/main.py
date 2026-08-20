@@ -1,5 +1,6 @@
 import time
 import re
+import os
 from fastapi import FastAPI
 from pydantic import BaseModel
 import uvicorn
@@ -7,16 +8,14 @@ import uvicorn
 # Initialize FastAPI
 app = FastAPI(title="D.O.O.M. API")
 
-iplist = [] # initialize the list of ip addresses sending requests
-
-# Initialize attack count
+iplist = [] 
 sql_attacks = 0
 malwares = 0
 brute_force_attacks = 0
 request_dict = {} 
 start_time = time.time()
 
-# from the of sql injection payloads file, make a list of those payloads
+# Load SQLi Payloads
 sqlPayloads = []
 try:
     with open("sqlinjectionpayloads.txt","r") as f:
@@ -24,9 +23,9 @@ try:
             if each.strip():
                 sqlPayloads.append(each.strip())
 except FileNotFoundError:
-    print("Warning: sqlinjectionpayloads.txt not found. Create it to detect SQLi.")
+    print("Warning: sqlinjectionpayloads.txt not found. SQLi detection disabled.")
             
-# from the malware keywords file, make a list of those payloads
+# Load Malware Payloads
 malwarePayloads = []
 try:
     with open("malwarepayloads.txt","r") as f:
@@ -34,13 +33,15 @@ try:
             if each.strip():
                 malwarePayloads.append(each.strip())
 except FileNotFoundError:
-    print("Warning: malwarepayloads.txt not found. Create it to detect Malware.")
+    print("Warning: malwarepayloads.txt not found. Malware detection disabled.")
 
-# D.O.O.M. JSON Payload Structure
+# Incoming Data Schema
 class LogBatch(BaseModel):
     doombot_id: str
     os: str
     logs: list[str]
+
+# --- CORE DETECTION LOGIC ---
 
 def bruteforce(line, request, ip):
     global brute_force_attacks
@@ -49,12 +50,12 @@ def bruteforce(line, request, ip):
     if not line:
         return 1
             
-    # Check for brute force
+    # Resolve Date (Includes Windows format)
     date = re.search(r"\b[A-Z][a-z]{2} \d{1,2} \d{2}:\d{2}:\d{2}\b",line)
     if not date:
         date = re.search(r"\d{1,2}/[A-Z][a-z]{2}/\d{4}:\d{2}:\d{2}:\d{2}",line)
         if not date:
-            date = re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}",line) # Windows format
+            date = re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}",line) 
             if not date:
                 date = "Couldn't resolve date"
             else:
@@ -64,15 +65,14 @@ def bruteforce(line, request, ip):
     else:
         date = date.group()
         
-    # Check if login was successful
-    if "Accepted password" in line or "4624" in line: # 4624 is Windows Success
+    # Check successful login (Linux or Windows 4624)
+    if "Accepted password" in line or "4624" in line: 
         message = f"{date} Login alert: {ip} successfully logged in."
     
-    # Check for Linux SSH fails OR Windows Event ID 4625 (Failed Logon)
+    # Check failed login (Linux or Windows 4625)
     elif "Invalid user" in line or "Failed password" in line or "4625" in line:
-        #check for number of requests
         if ip in request:
-            request[ip] += 1 # Increment the count of ip
+            request[ip] += 1
         elif ip not in request:
             request[ip] = 1
             
@@ -114,30 +114,34 @@ def ipbook(ip):
         iplist.append(ip)
     return iplist
 
-
-# Post logs
+# API ENDPOINT
 @app.post("/api/v1/logs")
 async def ingest_logs(batch: LogBatch):
     global start_time, request_dict
     
-    threat_detected = False # Used to trigger the ESP32 LED
+    threat_detected = False 
     
-    # clear request dictionary after 5 seconds
+    # Reset brute force tracker every 5 seconds
     current_time = time.time()
     if current_time - start_time > 5:
         request_dict = {}
         start_time = time.time()
             
-    # Process each log sent by the ESP32
+    # Process incoming batch
     for line in batch.logs:
-        ip = "Unknown IP" # Default fallback for local Sysmon logs without remote IPs
+        ip = "Unknown IP" 
         
-        # get ip address
+        # Archive the raw log for the frontend
+        with open("archive_logs.txt", "a") as archive:
+            # Format: OS | DoombotID | Raw Log
+            archive.write(f"{batch.os}|{batch.doombot_id}|{line}\n")
+        
+        # Extract IP address
         patterns = [
             r"(?i)(?:from|src|client|remote(?:_| )?addr|remote-ip)[=: ]*(\d{1,3}(?:\.\d{1,3}){3})",
             r"(\d{1,3}(?:\.\d{1,3}){3}) - -",
-            r"(\d{1,3}(?:\.\d{1,3}){3})[^0-9.]",           # IP followed by non-IP char
-            r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})",        # standalone anywhere (last resort)
+            r"(\d{1,3}(?:\.\d{1,3}){3})[^0-9.]",           
+            r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})",        
         ]
         
         for pat in patterns:
@@ -155,37 +159,35 @@ async def ingest_logs(batch: LogBatch):
                 for ip_addr in new_ips:
                     f.write(f"{ip_addr}\n")
                     
-        # bruteforce check
+        # Threat Scanning
         message = bruteforce(line, request_dict, ip)
-        if message != 1:
-            print(line)
-            if message != "":
-                threat_detected = True
-                with open("alerts.txt","a") as f:
-                    f.write(f"[{batch.doombot_id} - {batch.os}] {message}\n")
+        if message != 1 and message != "":
+            threat_detected = True
+            with open("alerts.txt","a") as f:
+                f.write(f"[{batch.doombot_id} - {batch.os}] {message}\n")
         
-        # sqlinjection check
         message = sqlinjection(line, sqlPayloads, ip)
-        if message != 1:
-            if message != "":
-                threat_detected = True
-                with open("alerts.txt","a") as f:
-                    f.write(f"[{batch.doombot_id} - {batch.os}] {message}\n")
+        if message != 1 and message != "":
+            threat_detected = True
+            with open("alerts.txt","a") as f:
+                f.write(f"[{batch.doombot_id} - {batch.os}] {message}\n")
                     
-        # malwaredetection check
         message = malwaredetection(line, malwarePayloads, ip)
-        if message != 1:
-            if message != "":
-                threat_detected = True
-                with open("alerts.txt","a") as f:
-                    f.write(f"[{batch.doombot_id} - {batch.os}] {message}\n")
+        if message != 1 and message != "":
+            threat_detected = True
+            with open("alerts.txt","a") as f:
+                f.write(f"[{batch.doombot_id} - {batch.os}] {message}\n")
 
-    # Send the response back to the ESP32 to control the Red LED
+    # Hardware Feedback Loop
+    if threat_detected:
+        print(f"[{batch.doombot_id}] THREAT DETECTED. Instructing Doombot: RED LED ON")
+    else:
+        print(f"[{batch.doombot_id}] Status clear. Instructing Doombot: GREEN LED ON")
+
     return {
         "status": "success", 
         "threat_detected": threat_detected
     }
 
 if __name__ == "__main__":
-    # Start the FastAPI server on port 8000
     uvicorn.run(app, host="0.0.0.0", port=8000)
