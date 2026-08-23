@@ -20,6 +20,16 @@ After installing doombot on the endpoint, following commands should be run:
     PAYLOAD="{\"doombot_id\":\"doombot-linux-1\",\"os\":\"Linux\",\"logs\":$LOGS}"
     echo "$PAYLOAD" > /dev/ttyUSB0
 
+If doombot is not installed, agent program can be run and following commands should be run:
+
+**Windows**
+
+    python agent.py #For python agent
+
+**Linux**
+
+    sudo python3 agent.py
+    
 Start FastAPI server:
 
     uvicorn main:app --reload
