@@ -1,3 +1,4 @@
+import os
 import time
 import json
 import platform
@@ -7,11 +8,10 @@ import urllib.request
 import urllib.error
 
 # Configuration
-FASTAPI_URL = "URL"  # Change to your FastAPI Server IP
+FASTAPI_URL = "http://192.168.100.30:8001/api/v1/logs" #FastAPI URL
 POLL_INTERVAL = 5  # Time in seconds between log checks
 AGENT_ID = f"agent-{socket.gethostname()}"
 CURRENT_OS = platform.system()  # Windows or Linux
-
 
 last_windows_time = None
 last_linux_pos = 0
@@ -21,7 +21,7 @@ def get_windows_sysmon_logs():
     global last_windows_time
     logs = []
     
-    # PowerShell command to grab the latest 5 Sysmon logs
+    # PowerShell command to take the latest 5 Sysmon logs
     ps_cmd = (
         'Get-WinEvent -LogName "Microsoft-Windows-Sysmon/Operational" -MaxEvents 5 '
         '-ErrorAction SilentlyContinue | Select-Object -ExpandProperty Message'
@@ -44,29 +44,27 @@ def get_windows_sysmon_logs():
     return logs
 
 def get_linux_auth_logs():
-    """Tails /var/log/auth.log from the last read file offset."""
+    """Queries Linux auth logs via journalctl (for modern systemd) or auth.log (legacy)."""
     global last_linux_pos
-    log_file_path = "/var/log/auth.log"
     logs = []
     
+    # Read systemd journalctl
     try:
-        with open(log_file_path, "r") as f:
-            f.seek(last_linux_pos)
-            lines = f.readlines()
-            last_linux_pos = f.tell()
-            logs = [line.strip() for line in lines if line.strip()]
-    except FileNotFoundError:
-        # Fallback to syslog if auth.log is not present
-        try:
-            with open("/var/log/syslog", "r") as f:
-                f.seek(last_linux_pos)
-                lines = f.readlines()
-                last_linux_pos = f.tell()
-                logs = [line.strip() for line in lines if line.strip()]
-        except Exception as e:
-            print(f"[!] Linux Log Error: {e}")
-    except PermissionError:
-        print("[!] Error: Agent requires sudo/root permissions to read /var/log/auth.log")
+        # SYSLOG_FACILITY=10 maps to authpriv
+        cmd = [
+            "journalctl", 
+            "SYSLOG_FACILITY=10", 
+            "--since", f"{POLL_INTERVAL} seconds ago", 
+            "--no-pager", 
+            "-q"
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.stdout.strip():
+            logs = [line.strip() for line in result.stdout.split('\n') if line.strip()]
+            if logs:
+                return logs
+    except Exception:
+        pass # If journalctl fails, fall back to reading text files
         
     return logs
 
@@ -106,15 +104,16 @@ def main():
     print(f" Target Server: {FASTAPI_URL}")
     print(f"==================================================")
     
-    # Initialize file pointer for Linux so we don't dump the whole history on startup
+    # Initialize file pointer for Linux
     if CURRENT_OS == "Linux":
         global last_linux_pos
         for path in ["/var/log/auth.log", "/var/log/syslog"]:
             try:
-                with open(path, "r") as f:
-                    f.seek(0, 2)
-                    last_linux_pos = f.tell()
-                break
+                if os.path.exists(path):
+                    with open(path, "r") as f:
+                        f.seek(0, 2)
+                        last_linux_pos = f.tell()
+                    break
             except Exception:
                 continue
 
