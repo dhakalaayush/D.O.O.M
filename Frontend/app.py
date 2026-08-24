@@ -6,9 +6,9 @@ import os
 import re
 import google.generativeai as genai
 
-
 # AI SETUP
 try:
+    # Look for gemini_key.txt inside the Frontend folder
     with open("gemini_key.txt", "r") as f:
         GEMINI_API_KEY = f.read().strip()
     genai.configure(api_key=GEMINI_API_KEY)
@@ -93,15 +93,15 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# DYNAMIC DATA INGESTION
-# ==========================================
+# Data ingestion
 def get_real_alerts():
     alerts = []
-    if not os.path.exists("alerts.txt"):
+    # Pointing to the Backend folder
+    target_path = "../Backend/alerts.txt"
+    if not os.path.exists(target_path):
         return alerts
         
-    with open("alerts.txt", "r") as f:
+    with open(target_path, "r") as f:
         lines = f.readlines()
         
     for line in reversed(lines):
@@ -131,32 +131,73 @@ def get_real_alerts():
                 "cvss": 8.5 if severity == "HIGH" else 5.5,
                 "epss": "N/A",
                 "vpr": "N/A",
-                "mitigation": "" # Will be dynamically filled by Boris
+                "mitigation": "" 
             })
     return alerts
 
+def get_archive_logs():
+    """Parses raw archive_logs.txt into a structured format."""
+    logs = []
+    # Point to the Backend folder
+    target_path = "../Backend/archive_logs.txt"
+    if not os.path.exists(target_path):
+        return logs
+        
+    with open(target_path, "r") as f:
+        for line in f:
+            parts = line.strip().split("|", 2)
+            if len(parts) == 3:
+                os_type, bot, raw = parts
+                
+                # Extract time (HH:MM) for charts
+                time_match = re.search(r"(\d{2}:\d{2}):\d{2}", raw)
+                t_val = time_match.group(1) if time_match else "00:00"
+                
+                logs.append({
+                    "OS": os_type,
+                    "Doombot": bot,
+                    "Time": t_val,
+                    "Raw Log": raw
+                })
+    return logs
+
 real_alerts_data = get_real_alerts()
+archive_data = get_archive_logs()
 
-high_count = sum(1 for a in real_alerts_data if a["severity"] == "HIGH")
-med_count = sum(1 for a in real_alerts_data if a["severity"] == "MEDIUM")
-low_count = sum(1 for a in real_alerts_data if a["severity"] == "LOW")
+# Build Dynamic Fleet Data
+fleet_records = []
+unique_bots = {} 
 
-fleet_data = pd.DataFrame([
-    {"Doombot": "doombot1", "Machine Name": "Target-01", "Operating System": "Windows/Linux", "IP Address": "192.168.1.X", "Alerts": f"{len(real_alerts_data)} Total", "Status": "active", "high": high_count, "medium": med_count, "low": low_count},
-])
+# Map all known bots from alerts and archives
+for log in archive_data:
+    unique_bots[log["Doombot"]] = log["OS"]
+for alert in real_alerts_data:
+    unique_bots[alert["machine"]] = alert["os"]
 
-windows_logs = pd.DataFrame([
-    {"Timestamp": "<timestamp>", "Event ID": "<event_id>", "Process ID": "<process_id>", "User": "<user>", "Image": "<image>", "Parent Image": "<parent_image>", "Hashes": "<hash>"},
-])
+for bot, os_type in unique_bots.items():
+    bot_alerts = [a for a in real_alerts_data if a["machine"] == bot]
+    h = sum(1 for a in bot_alerts if a["severity"] == "HIGH")
+    m = sum(1 for a in bot_alerts if a["severity"] == "MEDIUM")
+    l = sum(1 for a in bot_alerts if a["severity"] == "LOW")
+    
+    fleet_records.append({
+        "Doombot": bot, 
+        "Machine Name": bot.upper(), 
+        "Operating System": os_type, 
+        "IP Address": "DHCP Assigned", 
+        "Alerts": f"{len(bot_alerts)} Total", 
+        "Status": "active", 
+        "high": h, "medium": m, "low": l
+    })
 
-linux_logs = pd.DataFrame([
-    {"Timestamp": "<timestamp>", "Hostname": "<hostname>", "Process": "<process_name>", "Description": "<description>"},
-])
+if not fleet_records:
+    fleet_records = [{"Doombot": "No Data", "Machine Name": "Awaiting Telemetry", "Operating System": "-", "IP Address": "-", "Alerts": "0", "Status": "inactive", "high": 0, "medium": 0, "low": 0}]
+
+fleet_data = pd.DataFrame(fleet_records)
+archive_df = pd.DataFrame(archive_data) if archive_data else pd.DataFrame(columns=["OS", "Doombot", "Time", "Raw Log"])
 
 
-# ==========================================
-# BORIS AI ANALYSIS MODAL
-# ==========================================
+# Boris AI
 @st.dialog("Boris Threat Assessment")
 def boris_popup(item):
     st.markdown(f"### {item['alert_name']}")
@@ -176,7 +217,6 @@ def boris_popup(item):
     
     st.markdown("#### **Boris Response**")
     
-    # Trigger Gemini when the modal opens
     with st.spinner("Boris is analyzing the threat telemetry..."):
         ai_mitigation = generate_boris_mitigation(item['alert_name'], item['description'], item['os'])
         
@@ -189,6 +229,7 @@ def boris_popup(item):
 col_logo, col_title, col_refresh = st.columns([1, 8, 2])
 
 with col_logo:
+    # Looks for Logo.png inside the Frontend folder
     if os.path.exists("Logo.png"):
         st.image("Logo.png", width=90)
     else:
@@ -307,28 +348,51 @@ st.divider()
 # Doombots Archive
 st.subheader("Doombots Archive")
 
+machine_options = [f"{bot} ({os})" for bot, os in unique_bots.items()] if unique_bots else ["No telemetry found"]
+
 selected_machine = st.selectbox(
     "Select Target Machine:",
-    options=["<machine name> (Windows)", "<machine name> (Linux)"],
+    options=machine_options,
     label_visibility="collapsed"
 )
 
 st.write("")
 
-if "(Windows)" in selected_machine:
-    st.markdown(windows_logs.to_html(index=False, classes="custom-table"), unsafe_allow_html=True)
+if not archive_df.empty and selected_machine != "No telemetry found":
+    target_bot = selected_machine.split(" (")[0]
+    filtered_logs = archive_df[archive_df["Doombot"] == target_bot][["Time", "Raw Log"]]
+    st.markdown(filtered_logs.to_html(index=False, classes="custom-table"), unsafe_allow_html=True)
 else:
-    st.markdown(linux_logs.to_html(index=False, classes="custom-table"), unsafe_allow_html=True)
+    st.info("No logs archived yet.")
 
 st.write("")
 st.write("")
 
-# Log Radar
+# Analytics Section
 col_radar, col_timeseries = st.columns([1, 1])
 
+# Dynamic Log Radar 
 with col_radar:
     radar_categories = ['System', 'Application', 'Disclosure', 'Network', 'Authentication']
-    radar_values = [4, 2, 1, 3, 5]
+    cats = {c: 0 for c in radar_categories}
+    
+    if not archive_df.empty:
+        for raw in archive_df["Raw Log"]:
+            raw_lower = raw.lower()
+            if any(x in raw_lower for x in ["password", "fail", "invalid", "login", "4624", "4625"]):
+                cats['Authentication'] += 1
+            elif any(x in raw_lower for x in ["ip", "tcp", "http", "port", "network"]):
+                cats['Network'] += 1
+            elif any(x in raw_lower for x in ["error", "kernel", "system"]):
+                cats['System'] += 1
+            elif any(x in raw_lower for x in ["select ", "union ", "inject"]):
+                cats['Application'] += 1
+            else:
+                cats['Disclosure'] += 1
+    else:
+        cats = {c: 1 for c in radar_categories} 
+        
+    radar_values = [cats[c] for c in radar_categories]
     
     radar_fig = go.Figure(data=go.Scatterpolar(
         r=radar_values,
@@ -354,12 +418,13 @@ with col_radar:
     )
     st.plotly_chart(radar_fig, use_container_width=True, key="archive_radar_chart")
     
-# Time Series
+# Dynamic Time Series 
 with col_timeseries:
-    time_data = pd.DataFrame({
-        "Time": ["9:00", "9:15", "9:30", "9:45", "10:00", "10:15"],
-        "Events": [8, 10, 18, 26, 12, 11]
-    })
+    if not archive_df.empty:
+        time_data = archive_df.groupby("Time").size().reset_index(name="Events")
+        time_data = time_data.sort_values("Time")
+    else:
+        time_data = pd.DataFrame({"Time": ["00:00"], "Events": [0]})
     
     line_fig = px.line(time_data, x="Time", y="Events", markers=True)
     line_fig.update_traces(line_color="#94a3b8", line_shape="spline")
@@ -370,6 +435,6 @@ with col_timeseries:
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(color="#9FA9B2"),
         xaxis=dict(title="", showgrid=False),
-        yaxis=dict(title="", showgrid=True, gridcolor="#334155", range=[0, 30])
+        yaxis=dict(title="", showgrid=True, gridcolor="#334155")
     )
     st.plotly_chart(line_fig, use_container_width=True, key="archive_timeline_chart")
