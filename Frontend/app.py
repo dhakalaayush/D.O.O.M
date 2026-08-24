@@ -8,7 +8,6 @@ import google.generativeai as genai
 
 # AI SETUP
 try:
-    # Look for gemini_key.txt inside the Frontend folder
     with open("gemini_key.txt", "r") as f:
         GEMINI_API_KEY = f.read().strip()
     genai.configure(api_key=GEMINI_API_KEY)
