@@ -41,7 +41,7 @@ class LogBatch(BaseModel):
     os: str
     logs: list[str]
 
-# Detection Logics
+# Detection Logic
 
 def bruteforce(line, request, ip):
     global brute_force_attacks
@@ -50,30 +50,23 @@ def bruteforce(line, request, ip):
     if not line:
         return 1
             
-    # Resolve Date
-    date = re.search(r"\b[A-Z][a-z]{2} \d{1,2} \d{2}:\d{2}:\d{2}\b",line)
+    # Resolve Date (Includes Windows format)
+    date = re.search(r"\b[A-Z][a-z]{2} \d{1,2} \d{2}:\d{2}:\d{2}\b", line)
     if not date:
-        date = re.search(r"\d{1,2}/[A-Z][a-z]{2}/\d{4}:\d{2}:\d{2}:\d{2}",line)
+        date = re.search(r"\d{1,2}/[A-Z][a-z]{2}/\d{4}:\d{2}:\d{2}:\d{2}", line)
         if not date:
-            date = re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}",line) 
-            if not date:
-                date = "Couldn't resolve date"
-            else:
-                date = date.group()
+            date = re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", line) 
+            date = date.group() if date else "Couldn't resolve date"
         else:
             date = date.group()
     else:
         date = date.group()
         
-    # Check successful login (Linux or Windows 4624)
-    if "Accepted password" in line or "4624" in line: 
-        message = f"{date} Login alert: {ip} successfully logged in."
-    
-    # Check failed login (Linux or Windows 4625)
-    elif "Invalid user" in line or "Failed password" in line or "4625" in line:
+    # Failed logins (Linux SSH / Windows 4625)
+    if "Invalid user" in line or "Failed password" in line or "4625" in line:
         if ip in request:
             request[ip] += 1
-        elif ip not in request:
+        else:
             request[ip] = 1
             
         if request[ip] > 3:
@@ -190,4 +183,4 @@ async def ingest_logs(batch: LogBatch):
     }
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8001)
