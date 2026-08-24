@@ -50,7 +50,7 @@ def bruteforce(line, request, ip):
     if not line:
         return 1
             
-    # Resolve Date (Includes Windows format)
+    # Resolve Date
     date = re.search(r"\b[A-Z][a-z]{2} \d{1,2} \d{2}:\d{2}:\d{2}\b",line)
     if not date:
         date = re.search(r"\d{1,2}/[A-Z][a-z]{2}/\d{4}:\d{2}:\d{2}:\d{2}",line)
@@ -114,7 +114,7 @@ def ipbook(ip):
         iplist.append(ip)
     return iplist
 
-# API ENDPOINT
+# API endpoint
 @app.post("/api/v1/logs")
 async def ingest_logs(batch: LogBatch):
     global start_time, request_dict
