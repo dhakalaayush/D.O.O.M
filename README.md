@@ -29,7 +29,4 @@ If doombot is not installed, agent program can be run and following commands sho
 **Linux**
 
     sudo python3 agent.py
-    
-Start FastAPI server:
 
-    uvicorn main:app --reload
