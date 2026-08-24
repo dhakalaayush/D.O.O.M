@@ -41,7 +41,7 @@ class LogBatch(BaseModel):
     os: str
     logs: list[str]
 
-# --- CORE DETECTION LOGIC ---
+# Detection Logics
 
 def bruteforce(line, request, ip):
     global brute_force_attacks
