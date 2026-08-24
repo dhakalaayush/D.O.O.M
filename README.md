@@ -1,3 +1,5 @@
+# Defense Observation, Orchestration and Monitoring - D.O.O.M
+
 After installing doombot on the endpoint, following commands should be run:
 
 **Windows**
