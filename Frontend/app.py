@@ -4,9 +4,32 @@ import plotly.express as px
 import plotly.graph_objects as go
 import os
 import re
+import time
+import json
 import google.generativeai as genai
+import streamlit.components.v1 as components
 
-# AI SETUP
+# Page Setup
+st.set_page_config(page_title="D.O.O.M. SIEM", layout="wide", initial_sidebar_state="collapsed")
+
+# Initialize AI Cache
+if 'boris_cache' not in st.session_state:
+    st.session_state.boris_cache = {}
+
+st.markdown("""
+<style>
+    .stApp { background-color: #011f02; color: white; }
+    h1, h2, h3, h4 { color: #f8fafc; font-weight: 600; }
+    hr { border-color: #334155; margin: 24px 0; }
+    .boris-banner { background-color: #001a02; padding: 24px; border-radius: 12px; border: 1px solid #334155; margin-top: 16px; }
+    .table-container { max-height: 400px; overflow-y: auto; border: 1px solid #334155; border-radius: 8px; }
+    .custom-table { width: 100%; border-collapse: collapse; font-family: sans-serif; }
+    .custom-table th { background-color: #001a02; color: #94a3b8; border: none; border-bottom: 1px solid #334155; padding: 12px 16px; text-align: left; font-weight: 600; position: sticky; top: 0; z-index: 1; }
+    .custom-table td { background-color: #011f02; color: white; border: none; border-bottom: 1px solid #1a301b; padding: 12px 16px; }
+</style>
+""", unsafe_allow_html=True)
+
+# AI Setup
 try:
     with open("gemini_key.txt", "r") as f:
         GEMINI_API_KEY = f.read().strip()
@@ -17,85 +40,42 @@ except FileNotFoundError:
     ai_enabled = False
     print("Error fetching AI. Boris AI will operate in offline fallback mode.")
 
-def generate_boris_mitigation(alert_name, description, os_type):
-    """Prompts Gemini to generate a tactical mitigation response."""
+def get_boris_assessment(details, os_type):
+    """Prompts Gemini to generate a full structured triage assessment."""
     if not ai_enabled:
-        return "Offline Mode: Isolate host and consult local DFIR playbook."
+        return {
+            "alert_name": "Uncategorized Threat", "severity": "MEDIUM", 
+            "cvss": "N/A", "epss": "N/A", "vpr": "N/A", 
+            "mitigation": "Offline Mode: Isolate host and consult local DFIR playbook."
+        }
         
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # Force the AI to return a clean JSON object
+        model = genai.GenerativeModel('gemini-3.6-flash', generation_config={"response_mime_type": "application/json"})
         prompt = f"""
         You are Boris, an expert cybersecurity AI assistant embedded in a custom SIEM.
-        Analyze the following security alert for a {os_type} machine and provide a highly concise, 
-        actionable incident response mitigation plan. Do not use markdown formatting like bolding in the response.
-        Keep it strictly under 5 sentences.
+        Analyze this security event on a {os_type} machine: "{details}"
         
-        Alert Name: {alert_name}
-        Details: {description}
+        Provide a JSON response with EXACTLY these keys:
+        - "alert_name": A short, clinical name for the threat (e.g., "SSH Brute Force", "SQL Injection").
+        - "severity": Must be exactly "HIGH", "MEDIUM", or "LOW".
+        - "cvss": Estimated CVSS 3.1 score out of 10 (e.g., "7.5", "9.8") or "N/A".
+        - "epss": Estimated EPSS score (e.g., "0.08") or "N/A".
+        - "vpr": Estimated VPR score (e.g., "6.2") or "N/A".
+        - "mitigation": A concise, actionable mitigation plan (under 3 sentences). Do not use markdown.
         """
         response = model.generate_content(prompt)
-        return response.text
+        return json.loads(response.text)
     except Exception as e:
-        return f"Boris encountered a neural link error: {str(e)}"
+        return {
+            "alert_name": "AI Parsing Error", "severity": "MEDIUM", 
+            "cvss": "N/A", "epss": "N/A", "vpr": "N/A", 
+            "mitigation": f"Boris encountered a neural link error: {str(e)}"
+        }
 
-# Page Setup
-st.set_page_config(page_title="D.O.O.M. SIEM", layout="wide", initial_sidebar_state="collapsed")
-
-st.markdown("""
-<style>
-    /* This is the theme of the webpage */
-    .stApp {
-    background-color: #011f02; 
-    color: white;
-    }
-    
-    h1, h2, h3, h4 {
-    color: #f8fafc; 
-    font-weight: 600;
-    }
-    
-    hr {
-        border-color: #334155; 
-        margin: 24px 0;
-    }
-    
-    .boris-banner {
-        background-color: #001a02;
-        padding: 24px;
-        border-radius: 12px;
-        border: 1px solid #334155;
-        margin-top: 16px;
-    }
-
-    /* This is for table */
-    .custom-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-family: sans-serif;
-    }
-    .custom-table th {
-        background-color: #001a02 ;
-        color: #94a3b8;
-        border: none;
-        border-bottom: 1px solid #334155;
-        padding: 12px 16px;
-        text-align: left;
-        font-weight: 600;
-    }
-    .custom-table td {
-        background-color: #011f02;
-        color: white;
-        border: none; 
-        border-bottom: 1px solid #1a301b;
-        padding: 12px 16px;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# Data ingestion
+# Data Ingestion
 def get_real_alerts():
     alerts = []
-    # Pointing to the Backend folder
     target_path = "../Backend/alerts.txt"
     if not os.path.exists(target_path):
         return alerts
@@ -103,73 +83,74 @@ def get_real_alerts():
     with open(target_path, "r") as f:
         lines = f.readlines()
         
-    for line in reversed(lines):
+    for line in lines:
         match = re.match(r"\[(.*?) - (.*?)\] (.*)", line.strip())
         if match:
             machine_id = match.group(1)
             os_type = match.group(2)
             details = match.group(3)
             
-            severity = "LOW"
-            alert_name = "Suspicious Activity"
+            # Create a clean cache signature by stripping dates, IPs, and varying attempt counts
+            sig = re.sub(r'\b[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\b', '', details) # Strip Dates
+            sig = re.sub(r'\d{1,3}(?:\.\d{1,3}){3}', '[IP]', sig) # Normalize IPs
+            sig = re.sub(r'\(\d+\sattempts\)', '', sig) # Strip Hydra attempt counts
+            cache_key = sig.strip()
             
-            if "SQL Injection" in details or "Suspicious Action" in details:
-                severity = "HIGH"
-                alert_name = "Payload / Injection Attack"
-            elif "Brute Force" in details:
-                severity = "MEDIUM"
-                alert_name = "Authentication Brute Force"
+            # Check AI Cache
+            if cache_key in st.session_state.boris_cache:
+                assessment = st.session_state.boris_cache[cache_key]
+            else:
+                assessment = get_boris_assessment(cache_key, os_type)
+                st.session_state.boris_cache[cache_key] = assessment
                 
             alerts.append({
-                "alert_name": alert_name,
+                "alert_name": assessment.get("alert_name", "Suspicious Activity"),
                 "machine": machine_id,
                 "os": os_type,
-                "severity": severity,
-                "cve_id": "Dynamic Triage",
-                "description": details,
-                "cvss": 8.5 if severity == "HIGH" else 5.5,
-                "epss": "N/A",
-                "vpr": "N/A",
-                "mitigation": "" 
+                "severity": assessment.get("severity", "LOW"),
+                "cve_id": "Boris AI Core",
+                "description": details, # Keep the original raw details for the popup
+                "cvss": assessment.get("cvss", "N/A"),
+                "epss": assessment.get("epss", "N/A"),
+                "vpr": assessment.get("vpr", "N/A"),
+                "mitigation": assessment.get("mitigation", "Investigate manually.") 
             })
     return alerts
 
 def get_archive_logs():
-    """Parses raw archive_logs.txt into a structured format."""
     logs = []
-    # Point to the Backend folder
     target_path = "../Backend/archive_logs.txt"
     if not os.path.exists(target_path):
         return logs
-        
     with open(target_path, "r") as f:
         for line in f:
             parts = line.strip().split("|", 2)
             if len(parts) == 3:
                 os_type, bot, raw = parts
-                
-                # Extract time (HH:MM) for charts
                 time_match = re.search(r"(\d{2}:\d{2}):\d{2}", raw)
                 t_val = time_match.group(1) if time_match else "00:00"
-                
-                logs.append({
-                    "OS": os_type,
-                    "Doombot": bot,
-                    "Time": t_val,
-                    "Raw Log": raw
-                })
+                logs.append({"OS": os_type, "Doombot": bot, "Time": t_val, "Raw Log": raw})
     return logs
 
 real_alerts_data = get_real_alerts()
 archive_data = get_archive_logs()
 
-# Build Dynamic Fleet Data
+
+if 'bot_log_counts' not in st.session_state:
+    st.session_state.bot_log_counts = {}
+if 'bot_last_active' not in st.session_state:
+    st.session_state.bot_last_active = {}
+
+current_time = time.time()
+current_counts = {}
 fleet_records = []
 unique_bots = {} 
 
-# Map all known bots from alerts and archives
 for log in archive_data:
-    unique_bots[log["Doombot"]] = log["OS"]
+    bot = log["Doombot"]
+    unique_bots[bot] = log["OS"]
+    current_counts[bot] = current_counts.get(bot, 0) + 1
+    
 for alert in real_alerts_data:
     unique_bots[alert["machine"]] = alert["os"]
 
@@ -179,14 +160,23 @@ for bot, os_type in unique_bots.items():
     m = sum(1 for a in bot_alerts if a["severity"] == "MEDIUM")
     l = sum(1 for a in bot_alerts if a["severity"] == "LOW")
     
+    status = "inactive"
+    current_bot_count = current_counts.get(bot, 0)
+    previous_bot_count = st.session_state.bot_log_counts.get(bot, 0)
+    
+    if current_bot_count > previous_bot_count:
+        st.session_state.bot_last_active[bot] = current_time
+        
+    st.session_state.bot_log_counts[bot] = current_bot_count
+    
+    last_active = st.session_state.bot_last_active.get(bot, 0)
+    if (current_time - last_active) <= 600 and last_active != 0:
+        status = "active"
+        
     fleet_records.append({
-        "Doombot": bot, 
-        "Machine Name": bot.upper(), 
-        "Operating System": os_type, 
-        "IP Address": "DHCP Assigned", 
-        "Alerts": f"{len(bot_alerts)} Total", 
-        "Status": "active", 
-        "high": h, "medium": m, "low": l
+        "Doombot": bot, "Machine Name": bot.upper(), "Operating System": os_type, 
+        "IP Address": "DHCP Assigned", "Alerts": f"{len(bot_alerts)} Total", 
+        "Status": status, "high": h, "medium": m, "low": l
     })
 
 if not fleet_records:
@@ -196,7 +186,16 @@ fleet_data = pd.DataFrame(fleet_records)
 archive_df = pd.DataFrame(archive_data) if archive_data else pd.DataFrame(columns=["OS", "Doombot", "Time", "Raw Log"])
 
 
-# Boris AI
+
+
+
+# UI
+
+
+
+
+
+# Boris AI Popup
 @st.dialog("Boris Threat Assessment")
 def boris_popup(item):
     st.markdown(f"### {item['alert_name']}")
@@ -208,6 +207,8 @@ def boris_popup(item):
     st.divider()
     
     col1, col2, col3 = st.columns(3)
+    
+    
     col1.metric("CVSS Score", item['cvss'])
     col2.metric("EPSS Score", item['epss'])
     col3.metric("VPR Score", item['vpr'])
@@ -215,107 +216,55 @@ def boris_popup(item):
     st.divider()
     
     st.markdown("#### **Boris Response**")
+    st.write(item['mitigation'])
     
-    with st.spinner("Boris is analyzing the threat telemetry..."):
-        ai_mitigation = generate_boris_mitigation(item['alert_name'], item['description'], item['os'])
-        
-    st.write(ai_mitigation)
-    
-    if st.button("Acknowledge & Close", use_container_width=True):
+    if st.button("Close", use_container_width=True):
         st.rerun()
 
 # Header
 col_logo, col_title, col_refresh = st.columns([1, 8, 2])
-
 with col_logo:
-    # Looks for Logo.png inside the Frontend folder
     if os.path.exists("Logo.png"):
         st.image("Logo.png", width=90)
     else:
         st.markdown("```\n[ LOGO ]\n```")
-
 with col_title:
     st.markdown("# D . O . O . M")
 
-with col_refresh:
-    st.write("") 
-    if st.button("Refresh Telemetry"):
-        st.rerun()
-
-st.write("")
-
 # Doombot Assets
 st.subheader("Doombot Assets")
-
 table_col, status_col = st.columns([3, 1])
 
 with table_col:
     display_cols = ["Doombot", "Machine Name", "Operating System", "IP Address", "Alerts", "Status"]
     st.markdown(fleet_data[display_cols].to_html(index=False, classes="custom-table"), unsafe_allow_html=True)
-
 with status_col:
     status_counts = fleet_data["Status"].value_counts().reset_index()
     status_counts.columns = ["Status", "Count"]
-    
-    fig_status = px.pie(
-        status_counts,
-        names="Status",
-        values="Count",
-        hole=0.6,
-        color="Status",
-        color_discrete_map={"active": "#0C8E5C", "inactive": "#8E1D0C"}
-    )
-    fig_status.update_layout(
-        margin=dict(t=0, b=0, l=0, r=0),
-        height=180,
-        showlegend=True,
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#cbd5e1")
-    )
+    fig_status = px.pie(status_counts, names="Status", values="Count", hole=0.6, color="Status", color_discrete_map={"active": "#0C8E5C", "inactive": "#8E1D0C"})
+    fig_status.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=180, showlegend=True, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#cbd5e1"))
     st.plotly_chart(fig_status, use_container_width=True, key="status_donut")
 
-# Alerts
+# Alerts Donuts
 st.subheader("Alerts")
 machine_cols = st.columns(max(len(fleet_data), 1))
-
 for idx, row in fleet_data.iterrows():
     with machine_cols[idx]:
-        sev_df = pd.DataFrame({
-            "Severity": ["high", "medium", "low"],
-            "Count": [row["high"], row["medium"], row["low"]]
-        })
-        
+        sev_df = pd.DataFrame({"Severity": ["HIGH", "MEDIUM", "LOW"], "Count": [row["high"], row["medium"], row["low"]]})
         if sev_df["Count"].sum() == 0:
-            sev_df = pd.DataFrame({"Severity": ["none"], "Count": [1]})
-            color_map = {"none": "#334155"}
+            sev_df = pd.DataFrame({"Severity": ["NONE"], "Count": [1]})
+            color_map = {"NONE": "#334155"}
         else:
-            color_map = {"high": "#8E1D0C", "medium": "#FFEC83", "low": "#0C8E5C"}
-
-        fig_machine = px.pie(
-            sev_df,
-            names="Severity",
-            values="Count",
-            hole=0.6,
-            color="Severity",
-            color_discrete_map=color_map
-        )
-        fig_machine.update_layout(
-            margin=dict(t=10, b=10, l=10, r=10),
-            height=180,
-            showlegend=True,
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#cbd5e1")
-        )
+            color_map = {"HIGH": "#8E1D0C", "MEDIUM": "#FFEC83", "LOW": "#0C8E5C"}
+            
+        fig_machine = px.pie(sev_df, names="Severity", values="Count", hole=0.6, color="Severity", color_discrete_map=color_map)
+        fig_machine.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=180, showlegend=True, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#cbd5e1"))
         st.plotly_chart(fig_machine, use_container_width=True, key=f"alert_donut_{row['Doombot']}_{idx}")
         st.markdown(f"<p style='text-align: center; font-weight: bold; color: #94a3b8;'>{row['Machine Name']}</p>", unsafe_allow_html=True)
-
 st.divider()
 
 # Threat Triage
 st.subheader("Threat Triage (Live Data)")
-
 h_col1, h_col2, h_col3, h_col4 = st.columns([3, 3, 2, 1.5])
 h_col1.markdown("**Alert**")
 h_col2.markdown("**Machine**")
@@ -326,98 +275,56 @@ st.markdown("<hr style='margin: 4px 0;'/>", unsafe_allow_html=True)
 if len(real_alerts_data) == 0:
     st.info("No active threats detected. Monitoring endpoints...")
 else:
-    for idx, alert in enumerate(real_alerts_data):
-        c1, c2, c3, c4 = st.columns([3, 3, 2, 1.5])
-        c1.write(alert["alert_name"])
-        c2.write(alert["machine"])
-        c3.write(alert["severity"])
-        if c4.button("● ● ●", key=f"btn_details_{idx}"):
-            boris_popup(alert)
-        st.markdown("<hr style='margin: 4px 0;'/>", unsafe_allow_html=True)
-
-st.markdown("""
-<div class="boris-banner">
-    <h3>Boris Analysis</h3>
-    <p>AI Analysis based on real-time alerts pulled directly from the Fast API engine.</p>
-</div>
-""", unsafe_allow_html=True)
+    triage_container = st.container(height=400)
+    with triage_container:
+        for idx, alert in enumerate(real_alerts_data):
+            c1, c2, c3, c4 = st.columns([3, 3, 2, 1.5])
+            c1.write(alert["alert_name"])
+            c2.write(alert["machine"])
+            c3.write(alert["severity"])
+            if c4.button("● ● ●", key=f"btn_details_{idx}"):
+                boris_popup(alert)
+            st.markdown("<hr style='margin: 4px 0;'/>", unsafe_allow_html=True)
 
 st.divider()
 
-# Doombots Archive
+# Doombots Archive 
 st.subheader("Doombots Archive")
-
 machine_options = [f"{bot} ({os})" for bot, os in unique_bots.items()] if unique_bots else ["No telemetry found"]
-
-selected_machine = st.selectbox(
-    "Select Target Machine:",
-    options=machine_options,
-    label_visibility="collapsed"
-)
-
+selected_machine = st.selectbox("Select Target Machine:", options=machine_options, label_visibility="collapsed")
 st.write("")
 
 if not archive_df.empty and selected_machine != "No telemetry found":
     target_bot = selected_machine.split(" (")[0]
     filtered_logs = archive_df[archive_df["Doombot"] == target_bot][["Time", "Raw Log"]]
-    st.markdown(filtered_logs.to_html(index=False, classes="custom-table"), unsafe_allow_html=True)
+    html_table = filtered_logs.to_html(index=False, classes="custom-table")
+    st.markdown(f"<div class='table-container'>{html_table}</div>", unsafe_allow_html=True)
 else:
     st.info("No logs archived yet.")
-
 st.write("")
 st.write("")
 
 # Analytics Section
 col_radar, col_timeseries = st.columns([1, 1])
-
-# Dynamic Log Radar 
 with col_radar:
     radar_categories = ['System', 'Application', 'Disclosure', 'Network', 'Authentication']
     cats = {c: 0 for c in radar_categories}
-    
     if not archive_df.empty:
         for raw in archive_df["Raw Log"]:
             raw_lower = raw.lower()
-            if any(x in raw_lower for x in ["password", "fail", "invalid", "login", "4624", "4625"]):
-                cats['Authentication'] += 1
-            elif any(x in raw_lower for x in ["ip", "tcp", "http", "port", "network"]):
-                cats['Network'] += 1
-            elif any(x in raw_lower for x in ["error", "kernel", "system"]):
-                cats['System'] += 1
-            elif any(x in raw_lower for x in ["select ", "union ", "inject"]):
-                cats['Application'] += 1
-            else:
-                cats['Disclosure'] += 1
+            if any(x in raw_lower for x in ["password", "fail", "invalid", "login", "4624", "4625"]): cats['Authentication'] += 1
+            elif any(x in raw_lower for x in ["ip", "tcp", "http", "port", "network"]): cats['Network'] += 1
+            elif any(x in raw_lower for x in ["error", "kernel", "system"]): cats['System'] += 1
+            elif any(x in raw_lower for x in ["select ", "union ", "inject"]): cats['Application'] += 1
+            else: cats['Disclosure'] += 1
     else:
         cats = {c: 1 for c in radar_categories} 
         
     radar_values = [cats[c] for c in radar_categories]
-    
-    radar_fig = go.Figure(data=go.Scatterpolar(
-        r=radar_values,
-        theta=radar_categories,
-        fill='toself',
-        fillcolor="#94a3b8",
-        line=dict(color='#94a3b8', width=2),
-        marker=dict(size=5, color='#cbd5e1')
-    ))
-    
-    radar_fig.update_layout(
-        polar=dict(
-            bgcolor="#021c03",
-            gridshape="linear",
-            radialaxis=dict(visible=False),
-            angularaxis=dict(linecolor="#9FA9B2", color="#9FA9B2")
-        ),
-        showlegend=False,
-        height=280,
-        margin=dict(t=20, b=20, l=40, r=40),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)"
-    )
+    radar_fig = go.Figure(data=go.Scatterpolar(r=radar_values, theta=radar_categories, fill='toself', fillcolor="#94a3b8", line=dict(color='#94a3b8', width=2), marker=dict(size=5, color='#cbd5e1')))
+    radar_fig.update_layout(polar=dict(bgcolor="#021c03", gridshape="linear", radialaxis=dict(visible=False), angularaxis=dict(linecolor="#9FA9B2", color="#9FA9B2")), showlegend=False, height=280, margin=dict(t=20, b=20, l=40, r=40), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
     st.plotly_chart(radar_fig, use_container_width=True, key="archive_radar_chart")
     
-# Dynamic Time Series 
 with col_timeseries:
     if not archive_df.empty:
         time_data = archive_df.groupby("Time").size().reset_index(name="Events")
@@ -427,13 +334,27 @@ with col_timeseries:
     
     line_fig = px.line(time_data, x="Time", y="Events", markers=True)
     line_fig.update_traces(line_color="#94a3b8", line_shape="spline")
-    line_fig.update_layout(
-        height=280,
-        margin=dict(t=20, b=20, l=20, r=20),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#9FA9B2"),
-        xaxis=dict(title="", showgrid=False),
-        yaxis=dict(title="", showgrid=True, gridcolor="#334155")
-    )
+    line_fig.update_layout(height=280, margin=dict(t=20, b=20, l=20, r=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9FA9B2"), xaxis=dict(title="", showgrid=False), yaxis=dict(title="", showgrid=True, gridcolor="#334155"))
     st.plotly_chart(line_fig, use_container_width=True, key="archive_timeline_chart")
+
+# Auto scroll to bottom
+components.html(
+    """
+    <script>
+        setTimeout(function() {
+            const doc = window.parent.document;
+            const tables = doc.querySelectorAll('.table-container');
+            tables.forEach(t => t.scrollTop = t.scrollHeight);
+            const stContainers = doc.querySelectorAll('div[data-testid="stVerticalBlock"]');
+            stContainers.forEach(c => {
+                const computed = window.parent.getComputedStyle(c);
+                if (computed.overflowY === 'auto' || computed.overflowY === 'scroll' || computed.overflowY === 'overlay') {
+                    c.scrollTop = c.scrollHeight;
+                }
+            });
+        }, 100); 
+    </script>
+    """,
+    height=0,
+    width=0
+)
