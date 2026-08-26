@@ -7,7 +7,6 @@ import re
 import time
 import json
 import google.generativeai as genai
-import streamlit.components.v1 as components
 
 # Page Setup
 st.set_page_config(page_title="D.O.O.M. SIEM", layout="wide", initial_sidebar_state="collapsed")
@@ -22,9 +21,8 @@ st.markdown("""
     h1, h2, h3, h4 { color: #f8fafc; font-weight: 600; }
     hr { border-color: #334155; margin: 24px 0; }
     .boris-banner { background-color: #001a02; padding: 24px; border-radius: 12px; border: 1px solid #334155; margin-top: 16px; }
-    .table-container { max-height: 400px; overflow-y: auto; border: 1px solid #334155; border-radius: 8px; }
-    .custom-table { width: 100%; border-collapse: collapse; font-family: sans-serif; }
-    .custom-table th { background-color: #001a02; color: #94a3b8; border: none; border-bottom: 1px solid #334155; padding: 12px 16px; text-align: left; font-weight: 600; position: sticky; top: 0; z-index: 1; }
+    .custom-table { width: 100%; border-collapse: collapse; font-family: sans-serif; border: 1px solid #334155; border-radius: 8px; overflow: hidden; }
+    .custom-table th { background-color: #001a02; color: #94a3b8; border: none; border-bottom: 1px solid #334155; padding: 12px 16px; text-align: left; font-weight: 600; }
     .custom-table td { background-color: #011f02; color: white; border: none; border-bottom: 1px solid #1a301b; padding: 12px 16px; }
 </style>
 """, unsafe_allow_html=True)
@@ -38,7 +36,7 @@ try:
 except FileNotFoundError:
     GEMINI_API_KEY = None
     ai_enabled = False
-    print("Error fetching AI. Boris AI will operate in offline fallback mode.")
+    print("Error fetching AI.")
 
 def get_boris_assessment(details, os_type):
     """Prompts Gemini to generate a full structured triage assessment."""
@@ -59,9 +57,9 @@ def get_boris_assessment(details, os_type):
         Provide a JSON response with EXACTLY these keys:
         - "alert_name": A short, clinical name for the threat (e.g., "SSH Brute Force", "SQL Injection").
         - "severity": Must be exactly "HIGH", "MEDIUM", or "LOW".
-        - "cvss": Estimated CVSS 3.1 score out of 10 (e.g., "7.5", "9.8") or "N/A".
-        - "epss": Estimated EPSS score (e.g., "0.08") or "N/A".
-        - "vpr": Estimated VPR score (e.g., "6.2") or "N/A".
+        - "cvss": Estimated CVSS 3.1 score out of 10 (e.g., "7.5", "9.8"). You MUST provide a numerical estimate, never output "N/A".
+        - "epss": Estimated EPSS score (e.g., "0.08"). You MUST provide a numerical estimate, never output "N/A".
+        - "vpr": Estimated VPR score (e.g., "6.2"). You MUST provide a numerical estimate, never output "N/A".
         - "mitigation": A concise, actionable mitigation plan (under 3 sentences). Do not use markdown.
         """
         response = model.generate_content(prompt)
@@ -143,7 +141,7 @@ if 'bot_last_active' not in st.session_state:
 
 current_time = time.time()
 current_counts = {}
-fleet_records = []
+fleet_records = {}
 unique_bots = {} 
 
 for log in archive_data:
@@ -154,6 +152,7 @@ for log in archive_data:
 for alert in real_alerts_data:
     unique_bots[alert["machine"]] = alert["os"]
 
+fleet_records = []
 for bot, os_type in unique_bots.items():
     bot_alerts = [a for a in real_alerts_data if a["machine"] == bot]
     h = sum(1 for a in bot_alerts if a["severity"] == "HIGH")
@@ -175,7 +174,7 @@ for bot, os_type in unique_bots.items():
         
     fleet_records.append({
         "Doombot": bot, "Machine Name": bot.upper(), "Operating System": os_type, 
-        "IP Address": "DHCP Assigned", "Alerts": f"{len(bot_alerts)} Total", 
+        "IP Address": "DHCP Assigned", "Alerts": f"{len(bot_alerts)}", 
         "Status": status, "high": h, "medium": m, "low": l
     })
 
@@ -187,15 +186,12 @@ archive_df = pd.DataFrame(archive_data) if archive_data else pd.DataFrame(column
 
 
 
-
-
-# UI
-
+# Dashboard
 
 
 
 
-# Boris AI Popup
+# Boris AI
 @st.dialog("Boris Threat Assessment")
 def boris_popup(item):
     st.markdown(f"### {item['alert_name']}")
@@ -207,8 +203,6 @@ def boris_popup(item):
     st.divider()
     
     col1, col2, col3 = st.columns(3)
-    
-    
     col1.metric("CVSS Score", item['cvss'])
     col2.metric("EPSS Score", item['epss'])
     col3.metric("VPR Score", item['vpr'])
@@ -264,7 +258,7 @@ for idx, row in fleet_data.iterrows():
 st.divider()
 
 # Threat Triage
-st.subheader("Threat Triage (Live Data)")
+st.subheader("Threat Triage (Live Data - Recent 10)")
 h_col1, h_col2, h_col3, h_col4 = st.columns([3, 3, 2, 1.5])
 h_col1.markdown("**Alert**")
 h_col2.markdown("**Machine**")
@@ -275,30 +269,35 @@ st.markdown("<hr style='margin: 4px 0;'/>", unsafe_allow_html=True)
 if len(real_alerts_data) == 0:
     st.info("No active threats detected. Monitoring endpoints...")
 else:
-    triage_container = st.container(height=400)
-    with triage_container:
-        for idx, alert in enumerate(real_alerts_data):
-            c1, c2, c3, c4 = st.columns([3, 3, 2, 1.5])
-            c1.write(alert["alert_name"])
-            c2.write(alert["machine"])
-            c3.write(alert["severity"])
-            if c4.button("● ● ●", key=f"btn_details_{idx}"):
-                boris_popup(alert)
-            st.markdown("<hr style='margin: 4px 0;'/>", unsafe_allow_html=True)
+    # Reverse the list and slice the first 10 so newest alerts are always at the top
+    recent_alerts = list(reversed(real_alerts_data))[:10]
+    
+    for idx, alert in enumerate(recent_alerts):
+        c1, c2, c3, c4 = st.columns([3, 3, 2, 1.5])
+        c1.write(alert["alert_name"])
+        c2.write(alert["machine"])
+        c3.write(alert["severity"])
+        if c4.button("● ● ●", key=f"btn_details_{idx}"):
+            boris_popup(alert)
+        st.markdown("<hr style='margin: 4px 0;'/>", unsafe_allow_html=True)
 
 st.divider()
 
 # Doombots Archive 
-st.subheader("Doombots Archive")
+st.subheader("Doombots Archive (Recent 10 Logs)")
 machine_options = [f"{bot} ({os})" for bot, os in unique_bots.items()] if unique_bots else ["No telemetry found"]
 selected_machine = st.selectbox("Select Target Machine:", options=machine_options, label_visibility="collapsed")
 st.write("")
 
 if not archive_df.empty and selected_machine != "No telemetry found":
     target_bot = selected_machine.split(" (")[0]
+    
+    # Grab logs for this bot, take the last 10, and flip them upside down (newest top)
     filtered_logs = archive_df[archive_df["Doombot"] == target_bot][["Time", "Raw Log"]]
-    html_table = filtered_logs.to_html(index=False, classes="custom-table")
-    st.markdown(f"<div class='table-container'>{html_table}</div>", unsafe_allow_html=True)
+    recent_logs = filtered_logs.tail(10).iloc[::-1]
+    
+    html_table = recent_logs.to_html(index=False, classes="custom-table")
+    st.markdown(html_table, unsafe_allow_html=True)
 else:
     st.info("No logs archived yet.")
 st.write("")
@@ -336,25 +335,3 @@ with col_timeseries:
     line_fig.update_traces(line_color="#94a3b8", line_shape="spline")
     line_fig.update_layout(height=280, margin=dict(t=20, b=20, l=20, r=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#9FA9B2"), xaxis=dict(title="", showgrid=False), yaxis=dict(title="", showgrid=True, gridcolor="#334155"))
     st.plotly_chart(line_fig, use_container_width=True, key="archive_timeline_chart")
-
-# Auto scroll to bottom
-components.html(
-    """
-    <script>
-        setTimeout(function() {
-            const doc = window.parent.document;
-            const tables = doc.querySelectorAll('.table-container');
-            tables.forEach(t => t.scrollTop = t.scrollHeight);
-            const stContainers = doc.querySelectorAll('div[data-testid="stVerticalBlock"]');
-            stContainers.forEach(c => {
-                const computed = window.parent.getComputedStyle(c);
-                if (computed.overflowY === 'auto' || computed.overflowY === 'scroll' || computed.overflowY === 'overlay') {
-                    c.scrollTop = c.scrollHeight;
-                }
-            });
-        }, 100); 
-    </script>
-    """,
-    height=0,
-    width=0
-)
