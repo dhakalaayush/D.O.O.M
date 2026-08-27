@@ -4,16 +4,29 @@ After installing doombot on the endpoint, following commands should be run:
 
 **Windows**
 
-    $port = New-Object System.IO.Ports.SerialPort "COM3", 115200, None, 8, one
+    
+    $port = New-Object System.IO.Ports.SerialPort COM3, 115200, None, 8, One
     $port.Open()
-    $sysmonLogs = Get-WinEvent -LogName "Microsoft-Windows-Sysmon/Operational" -MaxEvents 5 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Message
-    $payload = @{
-    doombot_id = "doombot-windows-1"
-    os = "Windows"
-    logs = @($sysmonLogs)
-    } | ConvertTo-Json -Compress
-    $port.WriteLine($payload)
-    $port.Close()
+    $lastEvent = Get-WinEvent -LogName "Security" -MaxEvents 1
+    $lastTime = $lastEvent.TimeCreated
+    Write-Host "[*] Listening for new Windows Security events..." -ForegroundColor Green
+    while ($true) {
+        $ErrorActionPreference = 'SilentlyContinue'
+        $events = Get-WinEvent -FilterHashtable @{LogName='Security'; StartTime=$lastTime}
+        if ($events) {
+            [array]::Reverse($events)
+            foreach ($event in $events) {
+                $cleanMessage = $event.Message -replace "`n|`r", " "
+                $logLine = "$($event.TimeCreated) Windows Security Event $($event.Id): $cleanMessage"
+            
+                $port.WriteLine($logLine)
+                Write-Host "-> Sent: Security Event $($event.Id)" -ForegroundColor Cyan
+                $lastTime = $event.TimeCreated
+            }
+        }
+        Start-Sleep -Seconds 2
+    }
+
 
 **Linux**
 
