@@ -18,7 +18,6 @@ After installing doombot on the endpoint, following commands should be run:
             foreach ($event in $events) {
                 $cleanMessage = $event.Message -replace "`n|`r", " "
                 $logLine = "$($event.TimeCreated) Windows Security Event $($event.Id): $cleanMessage"
-            
                 $port.WriteLine($logLine)
                 Write-Host "-> Sent: Security Event $($event.Id)" -ForegroundColor Cyan
                 $lastTime = $event.TimeCreated
