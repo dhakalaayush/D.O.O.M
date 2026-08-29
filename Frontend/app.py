@@ -77,43 +77,102 @@ def get_real_alerts():
     target_path = "../Backend/alerts.txt"
     if not os.path.exists(target_path):
         return alerts
-        
+
     with open(target_path, "r") as f:
         lines = f.readlines()
-        
+
     for line in lines:
         match = re.match(r"\[(.*?) - (.*?)\] (.*)", line.strip())
         if match:
             machine_id = match.group(1)
             os_type = match.group(2)
             details = match.group(3)
-            
+
+            # Extract the timestamp (HH:MM:SS) from the raw log details
+            time_match = re.search(r"(\d{2}:\d{2}:\d{2})", details)
+            alert_time = time_match.group(1) if time_match else "Unknown"
+
             # Create a clean cache signature by stripping dates, IPs, and varying attempt counts
             sig = re.sub(r'\b[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\b', '', details) # Strip Dates
             sig = re.sub(r'\d{1,3}(?:\.\d{1,3}){3}', '[IP]', sig) # Normalize IPs
             sig = re.sub(r'\(\d+\sattempts\)', '', sig) # Strip Hydra attempt counts
             cache_key = sig.strip()
-            
+
             # Check AI Cache
             if cache_key in st.session_state.boris_cache:
                 assessment = st.session_state.boris_cache[cache_key]
             else:
                 assessment = get_boris_assessment(cache_key, os_type)
                 st.session_state.boris_cache[cache_key] = assessment
-                
+
             alerts.append({
+                "timestamp": alert_time,
                 "alert_name": assessment.get("alert_name", "Suspicious Activity"),
                 "machine": machine_id,
                 "os": os_type,
                 "severity": assessment.get("severity", "LOW"),
                 "cve_id": "Boris AI Core",
-                "description": details, # Keep the original raw details for the popup
+                "description": details, 
                 "cvss": assessment.get("cvss", "N/A"),
                 "epss": assessment.get("epss", "N/A"),
                 "vpr": assessment.get("vpr", "N/A"),
                 "mitigation": assessment.get("mitigation", "Investigate manually.") 
             })
     return alerts
+
+# Parsing
+def parse_raw_log(raw_log, os_type):
+    """Parses raw log strings into structured fields based on OS."""
+    parsed = {
+        "Date": "", "Source": "", "User": "-", "RHost": "-", 
+        "Domain": "-", "Logon ID": "-", "Message": raw_log
+    }
+
+    # Clean literal '\t' strings and collapse multiple spaces
+    clean_log = raw_log.replace(r"\t", " ").replace("\t", " ")
+    clean_log = re.sub(r'\s+', ' ', clean_log)
+
+    if "windows" in os_type.lower():
+        match = re.match(r"(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2})\s+Windows Security Event\s+(\d+):\s+(.*)", clean_log)
+        if match:
+            parsed["Date"] = match.group(1)
+            parsed["Source"] = f"Event {match.group(2)}"
+            
+            # Isolate the main description
+            full_msg = match.group(3).strip()
+            parsed["Message"] = full_msg.split("Subject:")[0].strip() if "Subject:" in full_msg else full_msg
+            
+            # Extract specific Windows fields
+            acct_match = re.search(r"Account Name:\s*(\S+)", clean_log)
+            if acct_match: parsed["User"] = acct_match.group(1)
+            
+            domain_match = re.search(r"Account Domain:\s*(\S+)", clean_log)
+            if domain_match: parsed["Domain"] = domain_match.group(1)
+            
+            logon_match = re.search(r"Logon ID:\s*(\S+)", clean_log)
+            if logon_match: parsed["Logon ID"] = logon_match.group(1)
+            
+    elif "linux" in os_type.lower():
+        match = re.match(r"([A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+(\S+)\s+([^:]+):\s+(.*)", clean_log)
+        if match:
+            parsed["Date"] = match.group(1)
+            parsed["Source"] = match.group(3)
+            parsed["Message"] = match.group(4).strip()
+            
+            # Extract specific Linux fields
+            rhost_match = re.search(r"rhost=(\S+)", clean_log)
+            if rhost_match: parsed["RHost"] = rhost_match.group(1)
+            
+            user_match = re.search(r"user=(\S+)", clean_log)
+            if user_match: 
+                parsed["User"] = user_match.group(1)
+            else:
+                # Catch CRON session cases
+                alt_user_match = re.search(r"user\s+([a-zA-Z0-9_-]+)", clean_log)
+                if alt_user_match: parsed["User"] = alt_user_match.group(1)
+                
+    return parsed
+
 
 def get_archive_logs():
     logs = []
@@ -127,7 +186,21 @@ def get_archive_logs():
                 os_type, bot, raw = parts
                 time_match = re.search(r"(\d{2}:\d{2}):\d{2}", raw)
                 t_val = time_match.group(1) if time_match else "00:00"
-                logs.append({"OS": os_type, "Doombot": bot, "Time": t_val, "Raw Log": raw})
+                
+                parsed_data = parse_raw_log(raw, os_type)
+                
+                logs.append({
+                    "OS": os_type, 
+                    "Doombot": bot, 
+                    "Time": t_val, 
+                    "Source": parsed_data["Source"],
+                    "User": parsed_data["User"],
+                    "RHost": parsed_data["RHost"],
+                    "Domain": parsed_data["Domain"],
+                    "Logon ID": parsed_data["Logon ID"],
+                    "Message": parsed_data["Message"],
+                    "Raw Log": raw 
+                })
     return logs
 
 real_alerts_data = get_real_alerts()
@@ -258,12 +331,14 @@ for idx, row in fleet_data.iterrows():
 st.divider()
 
 # Threat Triage
-st.subheader("Threat Triage (Live Data - Recent 10)")
-h_col1, h_col2, h_col3, h_col4 = st.columns([3, 3, 2, 1.5])
-h_col1.markdown("**Alert**")
-h_col2.markdown("**Machine**")
-h_col3.markdown("**Severity**")
-h_col4.markdown("**View Details**")
+st.subheader("Threat Triage")
+
+h_col1, h_col2, h_col3, h_col4, h_col5 = st.columns([1.5, 3, 2.5, 2, 1.5])
+h_col1.markdown("**Time**")
+h_col2.markdown("**Alert**")
+h_col3.markdown("**Machine**")
+h_col4.markdown("**Severity**")
+h_col5.markdown("**View Details**")
 st.markdown("<hr style='margin: 4px 0;'/>", unsafe_allow_html=True)
 
 if len(real_alerts_data) == 0:
@@ -271,37 +346,47 @@ if len(real_alerts_data) == 0:
 else:
     # Reverse the list and slice the first 10 so newest alerts are always at the top
     recent_alerts = list(reversed(real_alerts_data))[:10]
-    
+
     for idx, alert in enumerate(recent_alerts):
-        c1, c2, c3, c4 = st.columns([3, 3, 2, 1.5])
-        c1.write(alert["alert_name"])
-        c2.write(alert["machine"])
-        c3.write(alert["severity"])
-        if c4.button("● ● ●", key=f"btn_details_{idx}"):
+        c1, c2, c3, c4, c5 = st.columns([1.5, 3, 2.5, 2, 1.5])
+        c1.write(alert.get("timestamp", "N/A"))
+        c2.write(alert["alert_name"])
+        c3.write(alert["machine"])
+        c4.write(alert["severity"])
+        if c5.button("● ● ●", key=f"btn_details_{idx}"):
             boris_popup(alert)
         st.markdown("<hr style='margin: 4px 0;'/>", unsafe_allow_html=True)
 
 st.divider()
 
 # Doombots Archive 
-st.subheader("Doombots Archive (Recent 10 Logs)")
+st.subheader("Doombots Archive")
 machine_options = [f"{bot} ({os})" for bot, os in unique_bots.items()] if unique_bots else ["No telemetry found"]
 selected_machine = st.selectbox("Select Target Machine:", options=machine_options, label_visibility="collapsed")
 st.write("")
 
 if not archive_df.empty and selected_machine != "No telemetry found":
     target_bot = selected_machine.split(" (")[0]
-    
-    # Grab logs for this bot, take the last 10, and flip them upside down (newest top)
-    filtered_logs = archive_df[archive_df["Doombot"] == target_bot][["Time", "Raw Log"]]
+    target_os = selected_machine.split(" (")[1].replace(")", "").lower()
+
+    # Determine which columns to show based on OS
+    if "windows" in target_os:
+        display_columns = ["Time", "Source", "User", "Domain", "Logon ID", "Message"]
+    elif "linux" in target_os:
+        display_columns = ["Time", "Source", "User", "RHost", "Message"]
+    else:
+        display_columns = ["Time", "Source", "User", "Message"]
+
+    filtered_logs = archive_df[archive_df["Doombot"] == target_bot][display_columns]
     recent_logs = filtered_logs.tail(10).iloc[::-1]
-    
+
     html_table = recent_logs.to_html(index=False, classes="custom-table")
     st.markdown(html_table, unsafe_allow_html=True)
 else:
     st.info("No logs archived yet.")
 st.write("")
 st.write("")
+
 
 # Analytics Section
 col_radar, col_timeseries = st.columns([1, 1])
