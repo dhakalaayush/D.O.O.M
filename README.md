@@ -1,6 +1,12 @@
 # Defense Observation, Orchestration and Monitoring - D.O.O.M
 
-After installing doombot on the endpoint, following commands should be run:
+### Install requirements
+
+    pip install -r requirements.txt
+
+### Running Agent
+
+If ESP32 Doombot is used, configure the WiFi and server IP address the C++ program. After connecting doombot to the machine, run these commands:
 
 **Windows**
 
@@ -38,9 +44,28 @@ If doombot is not installed, agent program can be run and following commands sho
 
 **Windows**
 
+    cd Agent
+    
     python agent.py #For python agent
 
 **Linux**
 
+    cd Agent
+
     sudo python3 agent.py
 
+### Running backend or FastAPI
+
+    cd Backend
+
+    python main.py
+
+# Running frontend or dashboard
+
+    cd Frontend
+
+    streamlit run app.py
+
+or
+
+    python -m streamlit run app.py
