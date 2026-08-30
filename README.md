@@ -60,7 +60,7 @@ If doombot is not installed, agent program can be run and following commands sho
 
     python main.py
 
-# Running frontend or dashboard
+### Running frontend or dashboard
 
     cd Frontend
 
