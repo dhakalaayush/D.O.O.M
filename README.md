@@ -1,6 +1,6 @@
 # Defense Observation, Orchestration and Monitoring - D.O.O.M
 
-### Install requirements
+### Installing requirements
 
     pip install -r requirements.txt
 
