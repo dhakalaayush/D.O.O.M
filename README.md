@@ -68,4 +68,6 @@ If doombot is not installed, agent program can be run and following commands sho
 
 or
 
+    cd Frontend
+    
     python -m streamlit run app.py
