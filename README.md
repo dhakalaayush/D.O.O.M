@@ -1,5 +1,7 @@
 # Defense Observation, Orchestration and Monitoring - D.O.O.M
 
+D.O.O.M is a SIEM tool designed to monitor security threats on endpoints. It collects logs from endpoints and aggregates them into a centralized log file. It analyzes the logs, correlates them and alerts if an incident is detected. It reports the incidents in the dashboard.
+
 ### Installing requirements
 
     pip install -r requirements.txt
