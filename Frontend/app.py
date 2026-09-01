@@ -216,11 +216,16 @@ current_time = time.time()
 current_counts = {}
 fleet_records = {}
 unique_bots = {} 
+bot_users = {} # Track the parsed username for each bot
 
 for log in archive_data:
     bot = log["Doombot"]
     unique_bots[bot] = log["OS"]
     current_counts[bot] = current_counts.get(bot, 0) + 1
+    
+    # Extract the username/account name if parsed
+    if log.get("User") and log["User"] != "-":
+        bot_users[bot] = log["User"]
     
 for alert in real_alerts_data:
     unique_bots[alert["machine"]] = alert["os"]
@@ -246,13 +251,13 @@ for bot, os_type in unique_bots.items():
         status = "active"
         
     fleet_records.append({
-        "Doombot": bot, "Machine Name": bot.upper(), "Operating System": os_type, 
+        "Doombot": bot, "Account Name": bot_users.get(bot, "-"), "Operating System": os_type, 
         "IP Address": "DHCP Assigned", "Alerts": f"{len(bot_alerts)}", 
         "Status": status, "high": h, "medium": m, "low": l
     })
 
 if not fleet_records:
-    fleet_records = [{"Doombot": "No Data", "Machine Name": "Awaiting Telemetry", "Operating System": "-", "IP Address": "-", "Alerts": "0", "Status": "inactive", "high": 0, "medium": 0, "low": 0}]
+    fleet_records = [{"Doombot": "No Data", "Account Name": "Awaiting Telemetry", "Operating System": "-", "IP Address": "-", "Alerts": "0", "Status": "inactive", "high": 0, "medium": 0, "low": 0}]
 
 fleet_data = pd.DataFrame(fleet_records)
 archive_df = pd.DataFrame(archive_data) if archive_data else pd.DataFrame(columns=["OS", "Doombot", "Time", "Raw Log"])
@@ -303,7 +308,7 @@ st.subheader("Doombot Assets")
 table_col, status_col = st.columns([3, 1])
 
 with table_col:
-    display_cols = ["Doombot", "Machine Name", "Operating System", "IP Address", "Alerts", "Status"]
+    display_cols = ["Doombot", "Account Name", "Operating System", "IP Address", "Alerts", "Status"]
     st.markdown(fleet_data[display_cols].to_html(index=False, classes="custom-table"), unsafe_allow_html=True)
 with status_col:
     status_counts = fleet_data["Status"].value_counts().reset_index()
@@ -327,7 +332,7 @@ for idx, row in fleet_data.iterrows():
         fig_machine = px.pie(sev_df, names="Severity", values="Count", hole=0.6, color="Severity", color_discrete_map=color_map)
         fig_machine.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=180, showlegend=True, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#cbd5e1"))
         st.plotly_chart(fig_machine, use_container_width=True, key=f"alert_donut_{row['Doombot']}_{idx}")
-        st.markdown(f"<p style='text-align: center; font-weight: bold; color: #94a3b8;'>{row['Machine Name']}</p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='text-align: center; font-weight: bold; color: #94a3b8;'>{row['Account Name']}</p>", unsafe_allow_html=True)
 st.divider()
 
 # Threat Triage
