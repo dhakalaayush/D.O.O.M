@@ -8,13 +8,15 @@ import urllib.request
 import urllib.error
 
 # Configuration
-FASTAPI_URL = "http://192.168.100.30:8001/api/v1/logs" #FastAPI URL
+FASTAPI_URL = "http://192.168.100.30:8001/api/v1/logs" # FastAPI URL
 POLL_INTERVAL = 5  # Time in seconds between log checks
 AGENT_ID = f"agent-{socket.gethostname()}"
 CURRENT_OS = platform.system()  # Windows or Linux
 
 last_windows_time = None
 last_linux_pos = 0
+access_log_path = None
+last_access_log_pos = 0
 
 def get_windows_sysmon_logs():
     """Queries Windows Sysmon logs newer than the last check."""
@@ -64,7 +66,28 @@ def get_linux_auth_logs():
             if logs:
                 return logs
     except Exception:
-        pass # If journalctl fails, fall back to reading text files
+        pass # Fall back to legacy file reading if needed
+        
+    return logs
+
+def get_linux_access_logs():
+    """Reads new entries from Apache or Nginx access.log."""
+    global access_log_path, last_access_log_pos
+    logs = []
+    
+    if not access_log_path or not os.path.exists(access_log_path):
+        return logs
+        
+    try:
+        with open(access_log_path, "r") as f:
+            f.seek(last_access_log_pos)
+            new_data = f.read()
+            last_access_log_pos = f.tell()
+            
+            if new_data.strip():
+                logs = [line.strip() for line in new_data.split('\n') if line.strip()]
+    except Exception as e:
+        print(f"[!] Access Log Error: {e}")
         
     return logs
 
@@ -104,9 +127,11 @@ def main():
     print(f" Target Server: {FASTAPI_URL}")
     print(f"==================================================")
     
-    # Initialize file pointer for Linux
+    # Initialize file pointers for Linux
     if CURRENT_OS == "Linux":
-        global last_linux_pos
+        global last_linux_pos, access_log_path, last_access_log_pos
+        
+        # Initialize auth.log fallback pointer
         for path in ["/var/log/auth.log", "/var/log/syslog"]:
             try:
                 if os.path.exists(path):
@@ -116,12 +141,26 @@ def main():
                     break
             except Exception:
                 continue
+                
+        # Initialize access.log pointer
+        for path in ["/var/log/nginx/access.log", "/var/log/apache2/access.log", "/var/log/httpd/access_log"]:
+            try:
+                if os.path.exists(path):
+                    access_log_path = path
+                    with open(path, "r") as f:
+                        f.seek(0, 2)
+                        last_access_log_pos = f.tell()
+                    print(f"[*] Monitoring access log: {access_log_path}")
+                    break
+            except Exception:
+                continue
 
     while True:
         if CURRENT_OS == "Windows":
             logs = get_windows_sysmon_logs()
         else:
             logs = get_linux_auth_logs()
+            logs.extend(get_linux_access_logs())
             
         if logs:
             send_payload(logs)
