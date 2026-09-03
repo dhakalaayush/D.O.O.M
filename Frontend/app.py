@@ -6,7 +6,7 @@ import os
 import re
 import time
 import json
-import google.generativeai as genai
+from google import genai
 
 # Page Setup
 st.set_page_config(page_title="D.O.O.M. SIEM", layout="wide", initial_sidebar_state="collapsed")
@@ -31,7 +31,7 @@ st.markdown("""
 try:
     with open("gemini_key.txt", "r") as f:
         GEMINI_API_KEY = f.read().strip()
-    genai.configure(api_key=GEMINI_API_KEY)
+    client = genai.Client(api_key=GEMINI_API_KEY)
     ai_enabled = True
 except FileNotFoundError:
     GEMINI_API_KEY = None
@@ -49,7 +49,6 @@ def get_boris_assessment(details, os_type):
         
     try:
         # Force the AI to return a clean JSON object
-        model = genai.GenerativeModel('gemini-3.6-flash', generation_config={"response_mime_type": "application/json"})
         prompt = f"""
         You are Boris, an expert cybersecurity AI assistant embedded in a custom SIEM.
         Analyze this security event on a {os_type} machine: "{details}"
@@ -62,7 +61,11 @@ def get_boris_assessment(details, os_type):
         - "vpr": Estimated VPR score (e.g., "6.2"). You MUST provide a numerical estimate, never output "N/A".
         - "mitigation": A concise, actionable mitigation plan (under 3 sentences). Do not use markdown.
         """
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model='gemini-3.6-flash',
+            contents=prompt,
+            config={"response_mime_type": "application/json"}
+        )
         return json.loads(response.text)
     except Exception as e:
         return {
