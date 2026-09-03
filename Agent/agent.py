@@ -8,7 +8,7 @@ import urllib.request
 import urllib.error
 
 # Configuration
-FASTAPI_URL = "http://192.168.100.30:8001/api/v1/logs" # FastAPI URL
+FASTAPI_URL = "http://192.168.1.78:8001/api/v1/logs" # FastAPI URL
 POLL_INTERVAL = 5  # Time in seconds between log checks
 AGENT_ID = f"agent-{socket.gethostname()}"
 CURRENT_OS = platform.system()  # Windows or Linux
