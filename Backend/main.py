@@ -44,12 +44,7 @@ class LogBatch(BaseModel):
 
 
 
-
 # Detection Logic
-
-
-
-
 
 def bruteforce(line, ip, tracker, window_seconds=60, threshold=3):
     """
